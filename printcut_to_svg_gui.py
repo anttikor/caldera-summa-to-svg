@@ -18,7 +18,7 @@ from printcut_to_svg import convert_jobfile_to_svg
 class PrintCutConverterGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("PrintCut to SVG Converter")
+        self.root.title("PrintCut/CUT to SVG Converter")
         self.root.geometry("600x500")
         self.root.resizable(True, True)
 
@@ -35,6 +35,7 @@ class PrintCutConverterGUI:
         self.path_color = tk.StringVar(value="black")
         self.rect_color = tk.StringVar(value="blue")
         self.trim_color = tk.StringVar(value="red")
+        self.create_layers = tk.BooleanVar(value=True)
 
         self.create_widgets()
         self.setup_layout()
@@ -44,7 +45,7 @@ class PrintCutConverterGUI:
         # Title label
         self.title_label = tk.Label(
             self.root,
-            text="PrintCut to SVG Converter",
+            text="PrintCut/CUT to SVG Converter",
             font=("Arial", 16, "bold")
         )
 
@@ -82,6 +83,10 @@ class PrintCutConverterGUI:
 
         self.trim_color_label = tk.Label(self.settings_frame, text="Trim Box Color:")
         self.trim_color_entry = tk.Entry(self.settings_frame, textvariable=self.trim_color, width=15)
+
+        # Layers checkbox
+        self.layers_check = tk.Checkbutton(self.settings_frame, text="Create separate layers for different tools",
+                                         variable=self.create_layers)
 
         # Buttons
         self.button_frame = tk.Frame(self.root)
@@ -150,6 +155,9 @@ class PrintCutConverterGUI:
         self.trim_color_label.grid(row=3, column=0, sticky=tk.W, pady=2)
         self.trim_color_entry.grid(row=3, column=1, sticky=tk.W, pady=2, padx=(10, 20))
 
+        # Layers checkbox
+        self.layers_check.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(10, 2))
+
         # Buttons
         self.button_frame.pack(pady=10)
         self.convert_btn.pack(side=tk.LEFT, padx=(20, 10))
@@ -166,8 +174,8 @@ class PrintCutConverterGUI:
     def browse_input_file(self):
         """Open file dialog to select input file"""
         file_path = filedialog.askopenfilename(
-            title="Select Print and Cut Job File",
-            filetypes=[("Job files", "*.txt"), ("All files", "*.*")]
+            title="Select Print and Cut File (.cut) or Job File (.txt)",
+            filetypes=[("CUT files", "*.cut"), ("Job files", "*.txt"), ("All files", "*.*")]
         )
         if file_path:
             self.input_file = file_path
@@ -254,13 +262,17 @@ class PrintCutConverterGUI:
             self.update_status(f"Converting: {self.input_file}")
             self.progress_var.set(50)
 
+            # Get layers setting
+            create_layers = self.create_layers.get()
+
             result = convert_jobfile_to_svg(
                 input_file=self.input_file,
                 output_file=self.output_file,
                 scale=scale,
                 path_color=path_color,
                 rect_color=rect_color,
-                trim_color=trim_color
+                trim_color=trim_color,
+                create_layers=create_layers
             )
 
             self.progress_var.set(100)

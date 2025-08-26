@@ -7,7 +7,7 @@ import re
 import svgwrite
 from pathlib import Path
 
-def convert_jobfile_to_svg(input_file, output_file, scale=25.4, path_color="black", rect_color="blue", trim_color="red"):
+def convert_jobfile_to_svg(input_file, output_file, scale=25.4, path_color="black", rect_color="blue", trim_color="red", create_layers=True):
     """
     Convert a Print and Cut Job File to SVG
 
@@ -18,15 +18,15 @@ def convert_jobfile_to_svg(input_file, output_file, scale=25.4, path_color="blac
         path_color (str): Color for paths (default "black")
         rect_color (str): Color for registration rectangles (default "blue")
         trim_color (str): Color for trim box elements (default "red")
+        create_layers (bool): Whether to create separate layers for different tools (default True)
     """
 
     # --- pientä apua ---
     num = r"[-+]?\d*\.\d+|[-+]?\d+"  # float tai int
     pair_re = re.compile(fr"\(({num})\s+({num})\)")
 
-    # --- keräillään polut ---
-    paths = []  # lista: {d:str, color:str} OUTLINE-poluille
-    rects = []  # lista: {x:float, y:float, w:float, h:float, color:str} kohdistusmerkeille
+    # --- keräillään polut ja järjestellään kerroksittain ---
+    layers = {}  # dict: layer_name -> {paths: [], rects: []}
     current_color = "black"  # QOLOR-lohkosta, esim. "Cut", "PDFTrimBox" jne.
 
     inside_outline = False
@@ -93,7 +93,10 @@ def convert_jobfile_to_svg(input_file, output_file, scale=25.4, path_color="blac
                         w = abs(x2 - x1)
                         h = abs(y2 - y1)
                         if w > 0 and h > 0:  # Vältä tyhjiä
-                            rects.append({"x": x, "y": y, "w": w, "h": h, "color": mayer_color})
+                            layer_name = mayer_color if create_layers else "rects"
+                            if layer_name not in layers:
+                                layers[layer_name] = {"paths": [], "rects": []}
+                            layers[layer_name]["rects"].append({"x": x, "y": y, "w": w, "h": h})
                             upd_bbox_rect(x, y, w, h)
                     inside_mayer = False
                     clip_coords = None
@@ -127,7 +130,10 @@ def convert_jobfile_to_svg(input_file, output_file, scale=25.4, path_color="blac
                         d = " ".join(path_cmds)
                         if close_pending:
                             d += " Z"
-                        paths.append({"d": d, "color": current_color})
+                        layer_name = current_color if create_layers else "paths"
+                        if layer_name not in layers:
+                            layers[layer_name] = {"paths": [], "rects": []}
+                        layers[layer_name]["paths"].append({"d": d})
                     inside_outline = False
                     path_cmds = []
                     start_point = None
@@ -174,17 +180,56 @@ def convert_jobfile_to_svg(input_file, output_file, scale=25.4, path_color="blac
     svg = svgwrite.Drawing(output_file, size=(f"{dw}mm", f"{dh}mm"))
     svg.viewbox(minx, miny, dw, dh)
 
-    # Piirrä polut
-    for item in paths:
-        color = trim_color if item["color"].lower().startswith("pdftrimbox") else path_color
-        svg.add(svg.path(d=item["d"], fill="none", stroke=color, stroke_width=0.2))
+    # Add SVG definitions for layers
+    defs = svg.defs
+    svg.add(defs)
 
-    # Piirrä kohdistusmerkit (suorakaiteina)
-    for item in rects:
-        color = trim_color if item["color"].lower().startswith("pdftrimbox") else rect_color
-        svg.add(svg.rect(insert=(item["x"] * scale, item["y"] * scale),
-                         size=(item["w"] * scale, item["h"] * scale),
-                         fill="none", stroke=color, stroke_width=0.1))
+    if create_layers:
+        # Create separate layers for each tool/color
+        for layer_name, layer_data in layers.items():
+            # Create a group for this layer
+            layer_group = svg.g(id=f"layer_{layer_name.replace(' ', '_').replace('/', '_')}",
+                              class_=f"tool_layer tool_{layer_name.lower().replace(' ', '_')}")
+
+            # Determine the color for this layer
+            if layer_name.lower().startswith("pdftrimbox"):
+                stroke_color = trim_color
+            elif "cut" in layer_name.lower():
+                stroke_color = path_color
+            else:
+                stroke_color = path_color  # Default for other tools
+
+            # Add paths in this layer
+            for path_item in layer_data["paths"]:
+                layer_group.add(svg.path(d=path_item["d"], fill="none",
+                                       stroke=stroke_color, stroke_width=0.2))
+
+            # Add rectangles in this layer
+            for rect_item in layer_data["rects"]:
+                rect_color = trim_color if layer_name.lower().startswith("pdftrimbox") else rect_color
+                layer_group.add(svg.rect(insert=(rect_item["x"] * scale, rect_item["y"] * scale),
+                                       size=(rect_item["w"] * scale, rect_item["h"] * scale),
+                                       fill="none", stroke=rect_color, stroke_width=0.1))
+
+            svg.add(layer_group)
+    else:
+        # Fallback to original single-layer approach if layers are disabled
+        # Collect all elements
+        all_paths = []
+        all_rects = []
+        for layer_data in layers.values():
+            all_paths.extend(layer_data["paths"])
+            all_rects.extend(layer_data["rects"])
+
+        # Piirrä polut
+        for item in all_paths:
+            svg.add(svg.path(d=item["d"], fill="none", stroke=path_color, stroke_width=0.2))
+
+        # Piirrä kohdistusmerkit (suorakaiteina)
+        for item in all_rects:
+            svg.add(svg.rect(insert=(item["x"] * scale, item["y"] * scale),
+                            size=(item["w"] * scale, item["h"] * scale),
+                            fill="none", stroke=rect_color, stroke_width=0.1))
 
     svg.save()
-    return f"SVG saved: {Path(output_file).resolve()}"
+    return f"SVG saved with {len(layers) if create_layers else 1} layers: {Path(output_file).resolve()}"
